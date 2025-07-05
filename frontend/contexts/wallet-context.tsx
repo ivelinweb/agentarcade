@@ -5,7 +5,9 @@ import { ethers } from 'ethers';
 import {
   switchToRootstockTestnet,
   sendTransaction as sendTx,
-  ROOTSTOCK_TESTNET_CHAIN_ID
+  ROOTSTOCK_TESTNET_CHAIN_ID,
+  getMetaMaskProvider,
+  initializeMetaMaskSDK
 } from '@/lib/wallet-connector';
 
 interface WalletContextType {
@@ -48,25 +50,32 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Initialize provider and check if already connected
   useEffect(() => {
     const initProvider = async () => {
-      if (typeof window !== 'undefined' && window.ethereum) {
+      if (typeof window !== 'undefined') {
         try {
-          // Create provider
-          const provider = new ethers.providers.Web3Provider(window.ethereum);
-          setProvider(provider);
+          // Initialize MetaMask SDK
+          await initializeMetaMaskSDK();
 
-          // Check if already connected
-          const accounts = await provider.listAccounts();
-          if (accounts.length > 0) {
-            setAccount(accounts[0]);
-            setIsConnected(true);
+          // Get MetaMask provider
+          const metaMaskProvider = await getMetaMaskProvider();
+          if (metaMaskProvider) {
+            // Create ethers provider
+            const provider = new ethers.providers.Web3Provider(metaMaskProvider);
+            setProvider(provider);
 
-            // Get chain ID
-            const network = await provider.getNetwork();
-            setChainId(network.chainId);
+            // Check if already connected
+            const accounts = await provider.listAccounts();
+            if (accounts.length > 0) {
+              setAccount(accounts[0]);
+              setIsConnected(true);
 
-            // Switch to Rootstock if needed
-            if (network.chainId !== ROOTSTOCK_TESTNET_CHAIN_ID) {
-              await switchToRootstockTestnet();
+              // Get chain ID
+              const network = await provider.getNetwork();
+              setChainId(network.chainId);
+
+              // Switch to Rootstock if needed
+              if (network.chainId !== ROOTSTOCK_TESTNET_CHAIN_ID) {
+                await switchToRootstockTestnet();
+              }
             }
           }
         } catch (error) {
@@ -80,38 +89,45 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Set up event listeners for account and chain changes
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.ethereum) {
-      const handleAccountsChanged = (accounts: string[]) => {
-        if (accounts.length === 0) {
-          // User disconnected
-          setIsConnected(false);
-          setAccount(null);
-          setBalance('0');
-        } else {
-          // Account changed
-          setAccount(accounts[0]);
-          setIsConnected(true);
+    const setupEventListeners = async () => {
+      if (typeof window !== 'undefined') {
+        const metaMaskProvider = await getMetaMaskProvider();
+        if (metaMaskProvider) {
+          const handleAccountsChanged = (accounts: string[]) => {
+            if (accounts.length === 0) {
+              // User disconnected
+              setIsConnected(false);
+              setAccount(null);
+              setBalance('0');
+            } else {
+              // Account changed
+              setAccount(accounts[0]);
+              setIsConnected(true);
+            }
+          };
+
+          const handleChainChanged = (chainIdHex: string) => {
+            const newChainId = parseInt(chainIdHex, 16);
+            setChainId(newChainId);
+
+            // Reload if chain changed
+            if (newChainId !== ROOTSTOCK_TESTNET_CHAIN_ID) {
+              switchToRootstockTestnet().catch(console.error);
+            }
+          };
+
+          metaMaskProvider.on('accountsChanged', handleAccountsChanged);
+          metaMaskProvider.on('chainChanged', handleChainChanged);
+
+          return () => {
+            metaMaskProvider.removeListener('accountsChanged', handleAccountsChanged);
+            metaMaskProvider.removeListener('chainChanged', handleChainChanged);
+          };
         }
-      };
+      }
+    };
 
-      const handleChainChanged = (chainIdHex: string) => {
-        const newChainId = parseInt(chainIdHex, 16);
-        setChainId(newChainId);
-
-        // Reload if chain changed
-        if (newChainId !== ROOTSTOCK_TESTNET_CHAIN_ID) {
-          switchToRootstockTestnet().catch(console.error);
-        }
-      };
-
-      window.ethereum.on('accountsChanged', handleAccountsChanged);
-      window.ethereum.on('chainChanged', handleChainChanged);
-
-      return () => {
-        window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
-        window.ethereum.removeListener('chainChanged', handleChainChanged);
-      };
-    }
+    setupEventListeners();
   }, []);
 
   // Update balance when account changes
@@ -145,12 +161,17 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setError(null);
 
     try {
-      if (!window.ethereum) {
-        throw new Error('No Ethereum wallet detected. Please install MetaMask.');
+      // Initialize MetaMask SDK
+      await initializeMetaMaskSDK();
+
+      // Get MetaMask provider
+      const metaMaskProvider = await getMetaMaskProvider();
+      if (!metaMaskProvider) {
+        throw new Error('MetaMask provider not available. Please install MetaMask.');
       }
 
       // Request accounts
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const provider = new ethers.providers.Web3Provider(metaMaskProvider);
       const accounts = await provider.send('eth_requestAccounts', []);
 
       if (accounts.length === 0) {

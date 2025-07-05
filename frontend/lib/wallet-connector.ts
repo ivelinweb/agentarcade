@@ -1,4 +1,3 @@
-import { InjectedConnector } from '@web3-react/injected-connector';
 import { ethers } from 'ethers';
 
 // Rootstock Testnet Chain ID
@@ -6,11 +5,6 @@ export const ROOTSTOCK_TESTNET_CHAIN_ID = 31;
 
 // Supported chain IDs
 export const supportedChainIds = [ROOTSTOCK_TESTNET_CHAIN_ID];
-
-// Injected connector for MetaMask and other browser wallets
-export const injectedConnector = new InjectedConnector({
-  supportedChainIds,
-});
 
 // Network configuration for Rootstock Testnet
 export const ROOTSTOCK_TESTNET_CONFIG = {
@@ -25,14 +19,63 @@ export const ROOTSTOCK_TESTNET_CONFIG = {
   blockExplorerUrls: ['https://explorer.testnet.rootstock.io'],
 };
 
+// MetaMask SDK instance
+let metaMaskSDK: any = null;
+
+// Initialize MetaMask SDK dynamically
+export const initializeMetaMaskSDK = async () => {
+  if (typeof window === 'undefined') return null;
+
+  if (!metaMaskSDK) {
+    try {
+      // Dynamic import to avoid SSR issues
+      const { MetaMaskSDK } = await import('@metamask/sdk');
+
+      metaMaskSDK = new MetaMaskSDK({
+        dappMetadata: {
+          name: 'Agent Arcade',
+          url: window.location.href,
+        },
+        preferDesktop: true,
+        // Disable React Native features for web
+        enableAnalytics: false,
+        extensionOnly: true, // Only use browser extension
+      });
+    } catch (error) {
+      console.warn('MetaMask SDK not available, falling back to window.ethereum:', error);
+      return null;
+    }
+  }
+  return metaMaskSDK;
+};
+
+// Get MetaMask provider with fallback
+export const getMetaMaskProvider = async () => {
+  if (typeof window === 'undefined') return null;
+
+  // Try to use MetaMask SDK first
+  const sdk = await initializeMetaMaskSDK();
+  if (sdk) {
+    try {
+      return sdk.getProvider();
+    } catch (error) {
+      console.warn('Failed to get provider from SDK, falling back to window.ethereum:', error);
+    }
+  }
+
+  // Fallback to window.ethereum
+  return window.ethereum || null;
+};
+
 // Function to add Rootstock Testnet to MetaMask
 export const addRootstockTestnetToMetaMask = async () => {
-  if (!window.ethereum) {
-    throw new Error('MetaMask is not installed');
+  const provider = await getMetaMaskProvider();
+  if (!provider) {
+    throw new Error('MetaMask provider not available');
   }
 
   try {
-    await window.ethereum.request({
+    await provider.request({
       method: 'wallet_addEthereumChain',
       params: [ROOTSTOCK_TESTNET_CONFIG],
     });
@@ -45,12 +88,13 @@ export const addRootstockTestnetToMetaMask = async () => {
 
 // Function to switch to Rootstock Testnet
 export const switchToRootstockTestnet = async () => {
-  if (!window.ethereum) {
-    throw new Error('MetaMask is not installed');
+  const provider = await getMetaMaskProvider();
+  if (!provider) {
+    throw new Error('MetaMask provider not available');
   }
 
   try {
-    await window.ethereum.request({
+    await provider.request({
       method: 'wallet_switchEthereumChain',
       params: [{ chainId: ROOTSTOCK_TESTNET_CONFIG.chainId }],
     });
@@ -65,7 +109,7 @@ export const switchToRootstockTestnet = async () => {
   }
 };
 
-// Function to send a transaction
+// Function to send a transaction using MetaMask SDK
 export const sendTransaction = async (
   provider: ethers.providers.Web3Provider,
   toAddress: string,
@@ -170,9 +214,9 @@ export const sendTransaction = async (
   }
 };
 
-// Declare ethereum property on window
+// Declare global types for MetaMask SDK
 declare global {
   interface Window {
-    ethereum: any;
+    ethereum?: any;
   }
 }
